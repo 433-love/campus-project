@@ -1,0 +1,14 @@
+# 数据库 (非常重要，不要上传数据)
+data.db
+*.sqlite
+*.sqlite3
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 环境变量 (如果以后有密码)
+.env
+
+# 用户上传的文件 (你朋友本地也会有这个)
+uploads/
