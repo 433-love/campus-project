@@ -61,6 +61,26 @@ class CommunityPost(Base):
     content_image_url = Column(String, nullable=True)
     ai_generated_text = Column(Text, nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    likes_count = Column(Integer, default=0, nullable=False)
+    comments_count = Column(Integer, default=0, nullable=False)
+
+
+class CommunityPostLike(Base):
+    __tablename__ = "community_post_likes"
+    like_id = Column(Integer, primary_key=True, index=True)
+    post_id = Column(Integer, ForeignKey("community_posts.post_id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
+    __table_args__ = ({},)
+
+
+class CommunityPostComment(Base):
+    __tablename__ = "community_post_comments"
+    comment_id = Column(Integer, primary_key=True, index=True)
+    post_id = Column(Integer, ForeignKey("community_posts.post_id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    content = Column(Text, nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class Badge(Base):

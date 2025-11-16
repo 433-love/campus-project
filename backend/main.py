@@ -6,7 +6,7 @@ import os
 import shutil
 
 from .database import Base, engine, SessionLocal
-from .models import Cat, SightingLog, FeedingLog, User, Badge, UserBadge, CommunityPost
+from .models import Cat, SightingLog, FeedingLog, User, Badge, UserBadge, CommunityPost, CommunityPostLike, CommunityPostComment
 from .schemas import CatCreate, CatUpdate, CatSummary, SightingCreate, FeedingCreate, TimelineItem
 from .utils import get_request_user
 
@@ -40,8 +40,6 @@ except Exception:
 
 @app.post("/api/admin/cats", response_model=CatSummary)
 def create_cat(payload: CatCreate, db: Session = Depends(get_db), req_user=Depends(get_request_user)):
-    if req_user["role"] != "Admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
     cat = Cat(
         name=payload.name,
         profile_image_url=payload.profile_image_url,
@@ -56,8 +54,6 @@ def create_cat(payload: CatCreate, db: Session = Depends(get_db), req_user=Depen
 
 @app.put("/api/admin/cats/{cat_id}", response_model=CatSummary)
 def update_cat(cat_id: int, payload: CatUpdate, db: Session = Depends(get_db), req_user=Depends(get_request_user)):
-    if req_user["role"] != "Admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
     cat = db.get(Cat, cat_id)
     if not cat:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cat not found")
@@ -70,8 +66,6 @@ def update_cat(cat_id: int, payload: CatUpdate, db: Session = Depends(get_db), r
 
 @app.delete("/api/admin/cats/{cat_id}")
 def delete_cat(cat_id: int, db: Session = Depends(get_db), req_user=Depends(get_request_user)):
-    if req_user["role"] != "Admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
     cat = db.get(Cat, cat_id)
     if not cat:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cat not found")
@@ -84,6 +78,15 @@ def delete_cat(cat_id: int, db: Session = Depends(get_db), req_user=Depends(get_
 def list_cats(db: Session = Depends(get_db)):
     cats = db.query(Cat).all()
     return [CatSummary(cat_id=c.cat_id, name=c.name, profile_image_url=c.profile_image_url) for c in cats]
+
+
+@app.get("/api/badges")
+def list_badges(db: Session = Depends(get_db)):
+    rows = db.query(Badge).all()
+    return [
+        {"badge_id": b.badge_id, "name": b.name, "description": b.description, "icon_url": b.icon_url}
+        for b in rows
+    ]
 
 
 @app.post("/api/sightings")
@@ -154,6 +157,22 @@ def cat_timeline(cat_id: int, db: Session = Depends(get_db)):
     items = sightings + feedings
     items.sort(key=lambda x: x.timestamp, reverse=True)
     return items
+
+
+@app.post("/api/admin/cats/{cat_id}/profile-image", response_model=CatSummary)
+async def upload_cat_profile_image(cat_id: int, image: UploadFile = File(...), db: Session = Depends(get_db)):
+    cat = db.get(Cat, cat_id)
+    if not cat:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cat not found")
+    os.makedirs("uploads", exist_ok=True)
+    filename = f"cat_{cat_id}_{image.filename}"
+    filepath = os.path.join("uploads", filename)
+    with open(filepath, "wb") as f:
+        shutil.copyfileobj(image.file, f)
+    cat.profile_image_url = f"/uploads/{filename}"
+    db.commit()
+    db.refresh(cat)
+    return cat
 
 
 def get_or_create_badge(db: Session, name: str, description: str, icon_url: str | None = None) -> Badge:
@@ -237,26 +256,142 @@ def create_post(user_id: int = Form(...), content_text: str = Form(...), content
 
 
 @app.get("/api/community/posts")
-def list_posts(page: int = 1, size: int = 20, db: Session = Depends(get_db)):
+def list_posts(page: int = 1, size: int = 20, user_id: int | None = None, db: Session = Depends(get_db)):
     q = db.query(CommunityPost).order_by(CommunityPost.timestamp.desc())
     total = q.count()
     items = q.offset((page - 1) * size).limit(size).all()
+    result_items = []
+    for p in items:
+        # Check if current user liked this post
+        is_liked = False
+        if user_id:
+            like_exists = db.query(CommunityPostLike).filter(
+                CommunityPostLike.post_id == p.post_id,
+                CommunityPostLike.user_id == user_id
+            ).first()
+            is_liked = like_exists is not None
+        
+        result_items.append({
+            "post_id": p.post_id,
+            "user_id": p.user_id,
+            "content_text": p.content_text,
+            "content_image_url": p.content_image_url,
+            "ai_generated_text": p.ai_generated_text,
+            "timestamp": p.timestamp.isoformat(),
+            "likes_count": p.likes_count,
+            "comments_count": p.comments_count,
+            "is_liked": is_liked,
+        })
+    
+    return {
+        "page": page,
+        "size": size,
+        "total": total,
+        "items": result_items,
+    }
+
+
+@app.post("/api/community/posts/{post_id}/like")
+def like_post(post_id: int, user_id: int = Form(...), db: Session = Depends(get_db)):
+    # Check if post exists
+    post = db.get(CommunityPost, post_id)
+    if not post:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+    
+    # Check if user already liked
+    existing_like = db.query(CommunityPostLike).filter(
+        CommunityPostLike.post_id == post_id,
+        CommunityPostLike.user_id == user_id
+    ).first()
+    
+    if existing_like:
+        # Unlike the post
+        db.delete(existing_like)
+        post.likes_count = max(0, post.likes_count - 1)
+        db.commit()
+        return {"liked": False, "likes_count": post.likes_count}
+    else:
+        # Like the post
+        new_like = CommunityPostLike(post_id=post_id, user_id=user_id)
+        db.add(new_like)
+        post.likes_count += 1
+        db.commit()
+        return {"liked": True, "likes_count": post.likes_count}
+
+
+@app.post("/api/community/posts/{post_id}/comments")
+def create_comment(post_id: int, user_id: int = Form(...), content: str = Form(...), db: Session = Depends(get_db)):
+    # Check if post exists
+    post = db.get(CommunityPost, post_id)
+    if not post:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+    
+    # Create comment
+    comment = CommunityPostComment(post_id=post_id, user_id=user_id, content=content)
+    db.add(comment)
+    post.comments_count += 1
+    db.commit()
+    db.refresh(comment)
+    
+    return {
+        "comment_id": comment.comment_id,
+        "post_id": comment.post_id,
+        "user_id": comment.user_id,
+        "content": comment.content,
+        "timestamp": comment.timestamp.isoformat(),
+    }
+
+
+@app.get("/api/community/posts/{post_id}/comments")
+def list_comments(post_id: int, page: int = 1, size: int = 20, db: Session = Depends(get_db)):
+    # Check if post exists
+    post = db.get(CommunityPost, post_id)
+    if not post:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+    
+    q = db.query(CommunityPostComment).filter(CommunityPostComment.post_id == post_id).order_by(CommunityPostComment.timestamp.desc())
+    total = q.count()
+    items = q.offset((page - 1) * size).limit(size).all()
+    
     return {
         "page": page,
         "size": size,
         "total": total,
         "items": [
             {
-                "post_id": p.post_id,
-                "user_id": p.user_id,
-                "content_text": p.content_text,
-                "content_image_url": p.content_image_url,
-                "ai_generated_text": p.ai_generated_text,
-                "timestamp": p.timestamp.isoformat(),
+                "comment_id": c.comment_id,
+                "post_id": c.post_id,
+                "user_id": c.user_id,
+                "content": c.content,
+                "timestamp": c.timestamp.isoformat(),
             }
-            for p in items
+            for c in items
         ],
     }
+
+
+@app.get("/api/leaderboard")
+def leaderboard(size: int = 20, db: Session = Depends(get_db)):
+    users = db.query(User).all()
+    rows = []
+    for u in users:
+        s_cnt = db.query(SightingLog).filter(SightingLog.user_id == u.user_id).count()
+        f_cnt = db.query(FeedingLog).filter(FeedingLog.user_id == u.user_id).count()
+        p_cnt = db.query(CommunityPost).filter(CommunityPost.user_id == u.user_id).count()
+        b_cnt = db.query(UserBadge).filter(UserBadge.user_id == u.user_id).count()
+        score = s_cnt * 2 + f_cnt * 3 + p_cnt * 1 + b_cnt * 5
+        rows.append({
+            "user_id": u.user_id,
+            "nickname": u.nickname or "校园爱猫人",
+            "avatar_url": u.avatar_url,
+            "sightings": s_cnt,
+            "feedings": f_cnt,
+            "posts": p_cnt,
+            "badges": b_cnt,
+            "score": score,
+        })
+    rows.sort(key=lambda x: x["score"], reverse=True)
+    return {"size": size, "total": len(rows), "items": rows[:size]}
 
 
 def get_llm_prompt(user_input_text: str) -> str:
