@@ -148,6 +148,161 @@ async function renderMe(){
   v.append(el("div", { className:"list" }, [ head, wall ]))
 }
 
+async function renderTracking(){
+  const v = $("#view"); v.innerHTML = ""
+  
+  // 设备管理部分
+  const deviceSection = el("div", { className:"section" }, [
+    el("h3", {}, ["追踪设备管理"])
+  ])
+  
+  // 添加设备表单
+  const addDeviceForm = el("div", { className:"list", style:"margin-bottom:20px" }, [
+    el("div", { className:"input" }, [ el("label", {}, [icon("🐱"),"选择猫咪"]), selectCat() ]),
+    el("div", { className:"input" }, [ el("label", {}, [icon("📡"),"设备类型"]), el("input", { id:"deviceType", placeholder:"GPS/RFID/Bluetooth" }) ]),
+    el("div", { className:"input" }, [ el("label", {}, [icon("📝"),"设备名称"]), el("input", { id:"deviceName", placeholder:"例如：GPS项圈" }) ]),
+    el("div", { className:"input" }, [ el("label", {}, [icon("🔢"),"设备序列号"]), el("input", { id:"deviceSerial", placeholder:"唯一序列号" }) ]),
+    el("div", { className:"input" }, [ el("label", {}, [icon("🔋"),"电量(%)"]), el("input", { id:"batteryLevel", type:"number", min:"0", max:"100", placeholder:"可选" }) ]),
+    el("button", { className:"btn", onclick: registerDevice }, [icon("✨"),"注册设备"])
+  ])
+  
+  deviceSection.append(addDeviceForm)
+  
+  // 显示设备列表
+  const devices = await fetchJSON(`${API}/api/tracking/devices`)
+  const deviceList = el("div", { className:"list" })
+  
+  if(devices.length === 0){
+    deviceList.append(el("div", { style:"text-align:center;padding:20px;color:#999" }, ["暂无追踪设备"]))
+  } else {
+    for(const d of devices){
+      const catInfo = state.cats.find(c => c.cat_id === d.cat_id)
+      const card = el("div", { className:"card", style:"margin-bottom:10px" }, [
+        el("div", { className:"content" }, [
+          el("div", { style:"font-weight:600;margin-bottom:5px" }, [`📡 ${d.device_name}`]),
+          el("div", { style:"font-size:14px;color:#666" }, [
+            `猫咪：${catInfo ? catInfo.name : '未知'} | 类型：${d.device_type} | 序列号：${d.device_serial}`
+          ]),
+          el("div", { style:"font-size:14px;color:#666" }, [
+            `电量：${d.battery_level !== null ? d.battery_level + '%' : '未知'} | 状态：${d.is_active ? '激活' : '未激活'}`
+          ]),
+          el("div", { className:"toolbar", style:"margin-top:8px" }, [
+            el("button", { className:"btn", onclick:()=>viewDeviceTracking(d) }, [icon("📍"),"查看轨迹"]),
+            el("button", { className:"btn", onclick:()=>addTrackingLog(d) }, [icon("➕"),"上报位置"]),
+            el("button", { className:"btn", onclick:()=>deleteDevice(d.device_id) }, [icon("🗑️"),"删除"])
+          ])
+        ])
+      ])
+      deviceList.append(card)
+    }
+  }
+  
+  deviceSection.append(deviceList)
+  v.append(deviceSection)
+}
+
+async function registerDevice(){
+  const catId = parseInt($("#catSel").value,10)
+  const deviceType = $("#deviceType").value
+  const deviceName = $("#deviceName").value
+  const deviceSerial = $("#deviceSerial").value
+  const batteryLevel = $("#batteryLevel").value ? parseInt($("#batteryLevel").value,10) : null
+  
+  if(!deviceType || !deviceName || !deviceSerial){
+    alert("请填写必填项")
+    return
+  }
+  
+  try {
+    await fetchJSON(`${API}/api/tracking/devices`, { 
+      method:"POST", 
+      headers:{ 'Content-Type':'application/json' }, 
+      body: JSON.stringify({ 
+        cat_id: catId, 
+        device_type: deviceType, 
+        device_name: deviceName, 
+        device_serial: deviceSerial,
+        battery_level: batteryLevel
+      }) 
+    })
+    alert("设备注册成功")
+    renderTracking()
+  } catch(e) {
+    alert("注册失败：" + e.message)
+  }
+}
+
+async function deleteDevice(deviceId){
+  if(!confirm("确定删除此设备？")) return
+  try {
+    await fetchJSON(`${API}/api/tracking/devices/${deviceId}`, { method:"DELETE" })
+    alert("删除成功")
+    renderTracking()
+  } catch(e) {
+    alert("删除失败：" + e.message)
+  }
+}
+
+async function viewDeviceTracking(device){
+  const v = $("#view"); v.innerHTML = ""
+  
+  const header = el("div", { className:"list", style:"margin-bottom:20px" }, [
+    el("h3", {}, [`📡 ${device.device_name} 的追踪记录`]),
+    el("div", { style:"font-size:14px;color:#666" }, [
+      `猫咪ID: ${device.cat_id} | 类型: ${device.device_type} | 序列号: ${device.device_serial}`
+    ]),
+    el("button", { className:"btn", onclick:()=>switchTab('tracking') }, [icon("◀"),"返回"])
+  ])
+  
+  v.append(header)
+  
+  const logs = await fetchJSON(`${API}/api/tracking/devices/${device.device_id}/logs`)
+  const logList = el("div", { className:"timeline" })
+  
+  if(logs.length === 0){
+    logList.append(el("div", { style:"text-align:center;padding:20px;color:#999" }, ["暂无追踪记录"]))
+  } else {
+    logs.forEach(log=>{
+      const item = el("div", { className:"item" }, [
+        el("div", { className:"meta" }, [ "📍 位置记录 · " + prettyDate(log.timestamp) ]),
+        el("div", {}, [ 
+          `坐标：${log.latitude}, ${log.longitude}`,
+          log.location_name ? el("div", { style:"color:#666" }, [`地点：${log.location_name}`]) : ""
+        ])
+      ])
+      logList.append(item)
+    })
+  }
+  
+  v.append(logList)
+}
+
+async function addTrackingLog(device){
+  const lat = prompt("请输入纬度（例如：39.9042）")
+  if(!lat) return
+  const lng = prompt("请输入经度（例如：116.4074）")
+  if(!lng) return
+  const locationName = prompt("地点名称（可选）", "")
+  
+  try {
+    await fetchJSON(`${API}/api/tracking/logs`, { 
+      method:"POST", 
+      headers:{ 'Content-Type':'application/json' }, 
+      body: JSON.stringify({ 
+        device_id: device.device_id, 
+        cat_id: device.cat_id, 
+        latitude: lat, 
+        longitude: lng,
+        location_name: locationName || null
+      }) 
+    })
+    alert("位置上报成功")
+    viewDeviceTracking(device)
+  } catch(e) {
+    alert("上报失败：" + e.message)
+  }
+}
+
 async function switchTab(tab){
   document.querySelectorAll('.tabbar button').forEach(b=>b.classList.remove('active'))
   document.querySelector(`.tabbar button[data-tab="${tab}"]`).classList.add('active')
@@ -155,6 +310,7 @@ async function switchTab(tab){
   else if(tab==='report'){ await loadCats(); renderReport() }
   else if(tab==='feed'){ await loadCats(); renderFeed() }
   else if(tab==='timeline'){ await loadCats(); await renderTimeline() }
+  else if(tab==='tracking'){ await loadCats(); await renderTracking() }
   else if(tab==='community'){ await renderCommunity() }
   else if(tab==='me'){ await renderMe() }
 }
