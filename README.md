@@ -153,3 +153,33 @@ frontend/app.js
 uploads/
 
 (需手动创建) 用户上传图片存放目录
+
+## 🐾 新功能：宠物追踪系统
+
+平台现在支持使用外设（GPS、RFID、Bluetooth 等）进行宠物追踪！
+
+### 功能特点
+
+- **设备管理**：注册和管理多种类型的追踪设备
+- **实时追踪**：记录宠物的位置信息和移动轨迹
+- **电量监控**：查看设备电量状态
+- **历史记录**：查看完整的追踪历史
+
+### 使用方法
+
+1. 在"追踪"标签页注册新设备
+2. 填写设备类型（GPS/RFID/Bluetooth）、名称和序列号
+3. 关联到特定猫咪
+4. 上报位置数据
+5. 查看追踪历史
+
+### API 端点
+
+- `POST /api/tracking/devices` - 注册追踪设备
+- `GET /api/tracking/devices` - 获取设备列表
+- `GET /api/tracking/devices/{device_id}` - 获取设备详情
+- `PUT /api/tracking/devices/{device_id}` - 更新设备信息
+- `DELETE /api/tracking/devices/{device_id}` - 删除设备
+- `POST /api/tracking/logs` - 上报位置数据
+- `GET /api/cats/{cat_id}/tracking` - 获取猫咪追踪历史
+- `GET /api/tracking/devices/{device_id}/logs` - 获取设备追踪记录
