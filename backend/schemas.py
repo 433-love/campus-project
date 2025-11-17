@@ -44,3 +44,52 @@ class TimelineItem(BaseModel):
     type: Literal["sighting", "feeding"]
     timestamp: datetime
     data: dict
+
+
+class TrackingDeviceCreate(BaseModel):
+    cat_id: int
+    device_type: str
+    device_name: str
+    device_serial: str
+    battery_level: Optional[int] = None
+
+
+class TrackingDeviceUpdate(BaseModel):
+    device_name: Optional[str] = None
+    battery_level: Optional[int] = None
+    is_active: Optional[int] = None
+
+
+class TrackingDeviceResponse(BaseModel):
+    device_id: int
+    cat_id: int
+    device_type: str
+    device_name: str
+    device_serial: str
+    battery_level: Optional[int] = None
+    is_active: int
+    registered_date: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class TrackingLogCreate(BaseModel):
+    device_id: int
+    cat_id: int
+    latitude: str
+    longitude: str
+    location_name: Optional[str] = None
+
+
+class TrackingLogResponse(BaseModel):
+    log_id: int
+    device_id: int
+    cat_id: int
+    latitude: str
+    longitude: str
+    location_name: Optional[str] = None
+    timestamp: datetime
+
+    class Config:
+        from_attributes = True

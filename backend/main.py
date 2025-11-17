@@ -6,8 +6,8 @@ import os
 import shutil
 
 from .database import Base, engine, SessionLocal
-from .models import Cat, SightingLog, FeedingLog, User, Badge, UserBadge, CommunityPost, CommunityPostLike, CommunityPostComment
-from .schemas import CatCreate, CatUpdate, CatSummary, SightingCreate, FeedingCreate, TimelineItem
+from .models import Cat, SightingLog, FeedingLog, User, Badge, UserBadge, CommunityPost, CommunityPostLike, CommunityPostComment, TrackingDevice, TrackingLog
+from .schemas import CatCreate, CatUpdate, CatSummary, SightingCreate, FeedingCreate, TimelineItem, TrackingDeviceCreate, TrackingDeviceUpdate, TrackingDeviceResponse, TrackingLogCreate, TrackingLogResponse
 from .utils import get_request_user
 
 
@@ -408,3 +408,126 @@ def generate_cat_speech(user_text: str = Form(...)):
     prompt = get_llm_prompt(user_text)
     fallback = "本喵表示：太阳暖暖，先睡一觉再说~ 🐱💤"
     return {"text": fallback, "prompt": prompt}
+
+
+# ==================== Tracking Device APIs ====================
+
+@app.post("/api/tracking/devices", response_model=TrackingDeviceResponse)
+def create_tracking_device(payload: TrackingDeviceCreate, db: Session = Depends(get_db), req_user=Depends(get_request_user)):
+    """注册一个新的追踪设备"""
+    # Check if device serial already exists
+    existing = db.query(TrackingDevice).filter(TrackingDevice.device_serial == payload.device_serial).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Device serial already registered")
+    
+    # Check if cat exists
+    cat = db.get(Cat, payload.cat_id)
+    if not cat:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cat not found")
+    
+    device = TrackingDevice(
+        cat_id=payload.cat_id,
+        device_type=payload.device_type,
+        device_name=payload.device_name,
+        device_serial=payload.device_serial,
+        battery_level=payload.battery_level,
+    )
+    db.add(device)
+    db.commit()
+    db.refresh(device)
+    return device
+
+
+@app.get("/api/tracking/devices", response_model=List[TrackingDeviceResponse])
+def list_tracking_devices(cat_id: int | None = None, db: Session = Depends(get_db)):
+    """列出所有追踪设备，可选按cat_id筛选"""
+    query = db.query(TrackingDevice)
+    if cat_id:
+        query = query.filter(TrackingDevice.cat_id == cat_id)
+    devices = query.all()
+    return devices
+
+
+@app.get("/api/tracking/devices/{device_id}", response_model=TrackingDeviceResponse)
+def get_tracking_device(device_id: int, db: Session = Depends(get_db)):
+    """获取单个追踪设备的详细信息"""
+    device = db.get(TrackingDevice, device_id)
+    if not device:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    return device
+
+
+@app.put("/api/tracking/devices/{device_id}", response_model=TrackingDeviceResponse)
+def update_tracking_device(device_id: int, payload: TrackingDeviceUpdate, db: Session = Depends(get_db), req_user=Depends(get_request_user)):
+    """更新追踪设备信息（如电量、激活状态）"""
+    device = db.get(TrackingDevice, device_id)
+    if not device:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(device, field, value)
+    
+    db.commit()
+    db.refresh(device)
+    return device
+
+
+@app.delete("/api/tracking/devices/{device_id}")
+def delete_tracking_device(device_id: int, db: Session = Depends(get_db), req_user=Depends(get_request_user)):
+    """删除追踪设备"""
+    device = db.get(TrackingDevice, device_id)
+    if not device:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    db.delete(device)
+    db.commit()
+    return {"deleted": True}
+
+
+# ==================== Tracking Log APIs ====================
+
+@app.post("/api/tracking/logs", response_model=TrackingLogResponse)
+def create_tracking_log(payload: TrackingLogCreate, db: Session = Depends(get_db)):
+    """记录追踪设备上报的位置数据"""
+    # Check if device exists
+    device = db.get(TrackingDevice, payload.device_id)
+    if not device:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    
+    # Check if cat exists
+    cat = db.get(Cat, payload.cat_id)
+    if not cat:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cat not found")
+    
+    log = TrackingLog(
+        device_id=payload.device_id,
+        cat_id=payload.cat_id,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        location_name=payload.location_name,
+    )
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+    return log
+
+
+@app.get("/api/cats/{cat_id}/tracking", response_model=List[TrackingLogResponse])
+def get_cat_tracking_logs(cat_id: int, limit: int = 50, db: Session = Depends(get_db)):
+    """获取指定猫咪的追踪历史记录"""
+    cat = db.get(Cat, cat_id)
+    if not cat:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cat not found")
+    
+    logs = db.query(TrackingLog).filter(TrackingLog.cat_id == cat_id).order_by(TrackingLog.timestamp.desc()).limit(limit).all()
+    return logs
+
+
+@app.get("/api/tracking/devices/{device_id}/logs", response_model=List[TrackingLogResponse])
+def get_device_tracking_logs(device_id: int, limit: int = 50, db: Session = Depends(get_db)):
+    """获取指定设备的追踪历史记录"""
+    device = db.get(TrackingDevice, device_id)
+    if not device:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    
+    logs = db.query(TrackingLog).filter(TrackingLog.device_id == device_id).order_by(TrackingLog.timestamp.desc()).limit(limit).all()
+    return logs

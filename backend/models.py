@@ -98,3 +98,28 @@ class UserBadge(Base):
     badge_id = Column(Integer, ForeignKey("badges.badge_id"), nullable=False)
     acquisition_date = Column(DateTime, default=datetime.utcnow, nullable=False)
     __table_args__ = ({},)
+
+
+class TrackingDevice(Base):
+    __tablename__ = "tracking_devices"
+    device_id = Column(Integer, primary_key=True, index=True)
+    cat_id = Column(Integer, ForeignKey("cats.cat_id"), nullable=False)
+    device_type = Column(String, nullable=False)  # GPS, RFID, Bluetooth等
+    device_name = Column(String, nullable=False)
+    device_serial = Column(String, unique=True, nullable=False)
+    battery_level = Column(Integer, nullable=True)  # 电量百分比
+    is_active = Column(Integer, default=1, nullable=False)  # 是否激活
+    registered_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    cat = relationship("Cat", backref="tracking_devices")
+
+
+class TrackingLog(Base):
+    __tablename__ = "tracking_logs"
+    log_id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(Integer, ForeignKey("tracking_devices.device_id"), nullable=False)
+    cat_id = Column(Integer, ForeignKey("cats.cat_id"), nullable=False)
+    latitude = Column(String, nullable=False)
+    longitude = Column(String, nullable=False)
+    location_name = Column(String, nullable=True)  # 可选的地点名称
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    device = relationship("TrackingDevice", backref="tracking_logs")
